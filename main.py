@@ -2,19 +2,29 @@ import requests
 import json
 import time
 from telebot import TeleBot
+from random_user_agent.user_agent import UserAgent
+from random_user_agent.params import SoftwareName, OperatingSystem
 
 
-headers={
-'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+software_names = [SoftwareName.CHROME.value]
+operating_systems = [OperatingSystem.WINDOWS.value, OperatingSystem.LINUX.value]   
+
+user_agent_rotator = UserAgent(software_names=software_names, operating_systems=operating_systems, limit=100)
+
+
+user_agent = user_agent_rotator.get_random_user_agent()
+
+headers = {
+    'User-Agent': user_agent
 }
 
-bot_key = ''
-chat_id = ''
+bot_key = '填写Telegram bot key' #@BotFather
+chat_id = '填写Telegram id' #@getmyid_bot
 # Init bot
 bot = TeleBot(bot_key)
 print("Bot init done.")
 
-room_id = ''
+room_id = '填写房间号'
 base_url = "https://api.live.bilibili.com/room/v1/Room/get_info?room_id="
 
 def get_live_status(room_id):
