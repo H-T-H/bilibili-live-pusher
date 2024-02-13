@@ -43,16 +43,20 @@ def send_live_end_notify():
 def main():
     last_status = 0
     while True:
-        current_status = get_live_status(room_id)
-        
-        if current_status in [0, 2]:
-            if last_status == 1:
-                send_live_end_notify()
-                last_status = current_status
-        elif current_status == 1:
-            if last_status in [0, 2]:
-                send_live_start_notify()
-                last_status = current_status
-        time.sleep(5)
+        try:
+            current_status = get_live_status(room_id)
+            
+            if current_status in [0, 2]:
+                if last_status == 1:
+                    send_live_end_notify()
+                    last_status = current_status
+            elif current_status == 1:
+                if last_status in [0, 2]:
+                    send_live_start_notify()
+                    last_status = current_status
+            time.sleep(5)
+        except Exception as e:
+            print("An error occurred:", e)
+            time.sleep(5)
 
 main()
