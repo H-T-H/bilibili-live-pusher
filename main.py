@@ -2,6 +2,8 @@ import requests
 import json
 import time
 from telebot import TeleBot
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 from random_user_agent.user_agent import UserAgent
 from random_user_agent.params import SoftwareName, OperatingSystem
 
@@ -29,10 +31,51 @@ print("Bot init done.")
 room_id = ''  # 请替换为实际的房间号
 base_url = "https://api.live.bilibili.com/room/v1/Room/get_info?room_id="
 
+REQUEST_TIMEOUT = 10
+POLL_INTERVAL = 5
+RECONNECT_INTERVAL = 10
+
+session = None
+
+
+def create_session():
+    """创建带重试的 HTTP session，连接异常后可整体丢弃重建。"""
+    retry = Retry(
+        total=3,
+        connect=3,
+        read=3,
+        status=3,
+        backoff_factor=1,
+        status_forcelist=(429, 500, 502, 503, 504),
+        allowed_methods=("GET",),
+        raise_on_status=False,
+    )
+
+    adapter = HTTPAdapter(max_retries=retry, pool_connections=5, pool_maxsize=5)
+    new_session = requests.Session()
+    new_session.headers.update(headers)
+    new_session.mount("https://", adapter)
+    new_session.mount("http://", adapter)
+    return new_session
+
+
+def reset_session():
+    """关闭旧连接池，下一次请求会重新握手。"""
+    global session
+    if session is not None:
+        session.close()
+    session = create_session()
+    print("HTTP session reconnected.")
+
+
 def get_live_status(room_id):
+    global session
+    if session is None:
+        reset_session()
+
     try:
         # 发起请求获取直播状态
-        getrequest = requests.get(base_url + room_id, headers=headers)
+        getrequest = session.get(base_url + room_id, timeout=REQUEST_TIMEOUT)
         getrequest.raise_for_status()  # 确保请求没有失败
 
         # 尝试解析 JSON
@@ -44,6 +87,14 @@ def get_live_status(room_id):
         else:
             print("API 响应数据格式不正确或缺少必要字段")
             return None
+    except (
+        requests.exceptions.SSLError,
+        requests.exceptions.ConnectionError,
+        requests.exceptions.Timeout,
+    ) as e:
+        print(f"连接错误，准备重连: {e}")
+        reset_session()
+        return None
     except requests.exceptions.RequestException as e:
         print(f"请求错误: {e}")
         return None
@@ -60,16 +111,27 @@ def get_live_status(room_id):
 def send_live_start_notify():
     """通知直播开始"""
     text = f"开播了，速来！😋😋😋\nhttps://live.bilibili.com/{room_id}"
-    bot.send_message(chat_id, text)
+    return send_message_with_retry(text)
 
 def send_live_end_notify():
     """通知直播结束"""
     text = "下播了！😭😭😭"
-    bot.send_message(chat_id, text)
+    return send_message_with_retry(text)
+
+
+def send_message_with_retry(text):
+    for attempt in range(1, 4):
+        try:
+            bot.send_message(chat_id, text)
+            return True
+        except Exception as e:
+            print(f"Telegram 推送失败，第 {attempt} 次: {e}")
+            time.sleep(attempt * 2)
+    return False
 
 def main():
     last_status = 0  # 初始状态，0 表示未开播
-    bot.send_message(chat_id, "机器人已启动")
+    send_message_with_retry("机器人已启动")
     while True:
         try:
             # 获取当前直播状态
@@ -77,26 +139,27 @@ def main():
 
             if current_status is None:
                 # 如果无法获取状态，跳过本次循环
-                time.sleep(5)
+                time.sleep(RECONNECT_INTERVAL)
                 continue
 
             # 如果当前状态为 1 (直播中)，并且上次状态为 0 或 2，说明直播开始
             if current_status == 1:
                 if last_status in [0, 2]:
-                    send_live_start_notify()
-                    last_status = current_status
+                    if send_live_start_notify():
+                        last_status = current_status
 
             # 如果当前状态为 0 或 2 (未开播或其他)，并且上次状态为 1，说明直播结束
             elif current_status in [0, 2]:
                 if last_status == 1:
-                    send_live_end_notify()
-                    last_status = current_status
+                    if send_live_end_notify():
+                        last_status = current_status
 
             # 每隔 5 秒检查一次
-            time.sleep(5)
+            time.sleep(POLL_INTERVAL)
         except Exception as e:
             print(f"主循环发生错误: {e}")
-            time.sleep(5)
+            reset_session()
+            time.sleep(RECONNECT_INTERVAL)
 
 # 启动主程序
 if __name__ == "__main__":
